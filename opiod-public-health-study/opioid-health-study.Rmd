@@ -1,0 +1,730 @@
+---
+title: "Public Health Opioid Study "
+author: "Mridul Khanna"
+output:
+  pdf_document:
+    toc: TRUE
+    toc_depth: 3
+    latex_engine: xelatex
+  html_document:
+    toc: no
+    df_print: paged
+header-includes:
+- \usepackage{caption}
+- \captionsetup[figure]{font=scriptsize}
+- \usepackage{sectsty}
+- \allsectionsfont{\color{ForestGreen}}
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r load-packages, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(sf)
+library(ggplot2)
+library(dplyr)
+library(knitr)
+library(rpart)
+library(rpart.plot)
+```
+
+\newpage
+
+# Introduction
+
+Mortality caused by overdose (over dependence) of painkiller drugs such as opiate and opioid in the US has been an enormous societal and public health problem in the US since the mid-1990s. It has now been recognised as a “drug epidemic”. We will investigate the relationship between mortality and opiate drug prescription, and the potential cause of this drug epidemic.
+
+
+
+# Theory
+
+McKelvie found that urbanized and impoverished neighbourhoods in North American cities have been some of the most impacted by drug use and the risk of overdose [1]. Lankenau et al found that in LA and NY, about half of the drug overdose or mortality population did not complete high school or were expelled from school, three quarters had a history of a psychological diagnosis, nearly all were homeless at some point or currently homeless [2].
+
+Several papers concluded that one major cause of drug epidemic is the incredibly high number of opioid prescriptions since 1999 [3-8]. Reyes reported a case where when family physician refused to prescribe more painkiller medication, a patient found relief at pain management clinics and paid cash for up to 120 opiate-based pills during each visit [9]. Griesler et al found that prescription opioid misusers who misused both their own prescriptions and prescription opioid drugs not prescribed to them may be most at risk for overdose [10]. Dallin et al highlighted that the greatest challenge to overcome was a lack of legal mandates and proper education for healthcare providers on best practices for addressing the epidemic [11]. Brondeel et al suggested that an important aspect of opioid abuse prevention was the vigilant prescribing of medications with abuse potential [12]. Light in his book wrote about how physicians were been given usage education of new drugs and too many incentives to prescribe the drugs by pharmaceutical companies [13]. In 2014, US Drug Enforcement Administration ruled to limiting the legal supply of opioid drugs through narrowed circumstances in which opioids could be prescribed and stopped automatic repeat prescriptions.
+
+The above two theories are supported by more researchers. Paulozzi et al found that rates of opioid misuse and overdose death are highest among poor, rural populations, and those who have mental illness; they also suggested improving medical practice in prescribing those drugs [14]. Fink et al listed income inequality, unemployment and poverty rate as few of the socio-economic indicators that associates with drug overdose and deaths. They concluded that rates of drug overdose deaths are concentrated in counties with greater prescription opioid supply [15]. Johnson et al named financial problems, unemployment, physical disability, depression, less educated and reside in rural areas most common factors of drug overdose or mortality; majority of decedents were prescribed opioids for management of chronic pain and many exhibited behaviours indicative of prescribed medication misuse [16].
+
+Therefore, social-economic disadvantage and better drug supply and medical practice seemed to be the two main factors cause the drug epidemic. Researchers found many drug users are alcohol drinkers, however no causal relationship between alcohol abuse and drug overdose or mortality. Poverty is one element of social-economic disadvantage. Many who were prescribed for chronic pain management later ended up over dependent on the drugs.
+
+**We hypothesize that poverty and opioid prescription rates are positively associated with mortality in the United States.**
+
+
+
+# Data and Methodology
+
+## Data
+
+To prove the hypothesis, we have used county data from multiple sources in the U.S :
+
+- Mortality rates from drug and alcohol use from the Centers for Disease Control and Prevention (CDC)
+- Opiate prescription rates from national prescribing datasets
+- Poverty rates from the U.S. Census Bureau American Community Survey (ACS)
+- Geospatial shapefiles from the U.S. Census Bureau for mapping
+
+These datasets were merged using a common county-level Id2/FIPS codes.
+
+The variables used for the study are:
+
+- Mortality rate: Deaths due to consumption of drugs and alcohol per 100,000 people (target variable)
+- Poverty rate: It is the percentage of families living below the poverty level
+- Opiate prescribing rate: Number of prescriptions per 100,000 people
+- For the decision tree we are creating a binary poverty variable. 
+
+```{r load poverty data, warning=FALSE}
+
+poverty.data <- read.csv(
+  "Data/US-data/poverty/poverty data - ACS_16_5YR_S1702_with_ann.csv", 
+  skip = 1, header = T)
+
+```
+
+
+```{r load mortality data, warning=FALSE}
+
+drugs.mort.data <- read.table(
+  "Data/US-data/mortality/Drugs and alcohol Cause of Death, 1999-2016.txt", 
+    sep = '\t', header = T)
+
+```
+
+
+```{r compare names of ID vars, warning=FALSE}
+
+names(poverty.data)[3]
+
+names(drugs.mort.data)[2]
+
+
+```
+
+
+```{r compare structure of ID vars, warning=FALSE}
+
+head(poverty.data$Id2)
+
+head(drugs.mort.data$County.Code)
+
+```
+
+## Methodology
+
+### Data Cleaning and Transformation
+
+- Removing unreliable or missing mortality data
+- Using z score standardisation of key variables
+- Merged multiple datasets on FIPS/ID2 code
+
+### Model Development
+
+Two modelling techniques were applied:
+1. A multiple linear regression model was build. It was followed by including an interaction term between poverty and opiate prescribing rate.
+2. A decision tree classification model using a binary version of poverty.This helped us to identify high-risk counties and segregating them into groups.
+
+Both modelling methods were used to examine how poverty and access to opioid consumption is linked to mortality outcomes. We examined multiple visualisations and spatial data to produce maps that visualise risk levels and model predictions across U.S. counties.
+
+```{r merge poverty and death data, warning=FALSE, message=FALSE}
+
+# Merging poverty and mortality datasets by FIPS code after cleaning column names and removing county suffixes.
+
+library(tidyverse)
+
+patterns <- c(' County| Parish| city| Borough| Census Area')
+
+county.data <- merge(
+  poverty.data %>% 
+    dplyr::rename(below.poverty.rate = 
+             All.families....Percent.below.poverty.level..Estimate..Families)  %>% 
+    dplyr::select(Id2, below.poverty.rate),
+  drugs.mort.data %>% 
+    dplyr::rename(Id2 = County.Code,
+                mortality.rate = Crude.Rate) %>% 
+    mutate(county = gsub(patterns, "", County))  %>%
+    dplyr::select(Id2, county, mortality.rate))
+
+```
+
+
+```{r view structure of new dataset, echo=FALSE,  warning=FALSE, message=FALSE}
+
+head(county.data)
+
+```
+
+
+```{r}
+levels(as.factor(county.data$mortality.rate)) 
+```
+
+
+```{r editing mortality rate, warning=FALSE, message=FALSE}
+
+county.data <- county.data %>% 
+  mutate(mortality.rate = ifelse(mortality.rate == 'Unreliable', 
+                                 NA, as.numeric(as.character(mortality.rate))))
+
+           
+```
+
+
+```{r load data on opioid prescription rates}
+
+opioids.data <- read.csv("Data/US-data/opioids/opioids prescribing rates.csv")
+
+```
+
+
+```{r merge opioids data with county data}
+
+# Merging opioid prescribing data with county dataset and create z-scores for poverty and prescribing rates.
+
+library(tidyverse)
+
+county.data <- merge(
+  county.data  %>%
+  mutate(z.poverty = (below.poverty.rate - mean(below.poverty.rate, na.rm=T)) / 
+           sd(below.poverty.rate, na.rm=T)), 
+  opioids.data %>%
+  dplyr::rename(Id2 = FIPS.County.Code) %>% 
+  mutate(z.opiates = (X2016.Prescribing.Rate - mean(X2016.Prescribing.Rate, na.rm=T)) /
+           sd(X2016.Prescribing.Rate, na.rm=T)) %>%
+    dplyr::select(Id2, z.opiates, X2016.Prescribing.Rate))
+
+```
+
+
+
+```{r link us data with shape files, message=FALSE, warning=FALSE}
+
+library(sf)
+
+us.shape.1 <- 
+  st_read("Data/US-data/US shapefiles/cb_2016_us_county_20m.shp")
+
+```
+
+
+
+```{r load fip concordance file}
+
+fip.concordance <- read.csv("Data/US-data/fips concordance.csv")
+
+```
+
+
+
+```{r link shapefiles with fip concordance file}
+
+us.shape.2 <- us.shape.1 %>% 
+  merge(fip.concordance %>%
+          mutate(STATEFP =  ifelse(Numeric.code >= 0 & Numeric.code <= 9, 
+                             paste0(0 , Numeric.code), Numeric.code)) %>%
+          dplyr::rename(state = Alpha.code))
+
+```
+
+
+
+```{r edit county name in shapefile}
+
+us.shape.2$county <- paste0(us.shape.2$NAME, ", ", us.shape.2$state)
+us.shape.2$county <- gsub("Doña Ana, NM", "Dona Ana, NM", us.shape.2$county)
+us.shape.2$county <- gsub("LaSalle, LA", "La Salle, LA", us.shape.2$county)
+us.shape.2$county <- gsub("Oglala Lakota, SD", "Oglala, SD", us.shape.2$county)
+
+```
+
+
+
+```{r link us data with shape files2}
+
+us.shape.2 <- full_join(us.shape.2,
+  county.data %>%
+    dplyr::select(county, below.poverty.rate, mortality.rate, X2016.Prescribing.Rate))
+
+```
+
+
+## Exploratory Data Analysis
+
+### Scatter Plot: Standardised Poverty vs Mortality
+
+```{r poverty-vs-mortality}
+# Scatter plot showing the relationship between poverty and mortality
+ggplot(county.data, aes(x = z.poverty, y = mortality.rate)) +
+  geom_point(alpha = 0.6, color = "steelblue", size = 1.2) +
+  geom_smooth(method = "lm", se = FALSE, color = "black", linetype = "dashed") +
+  labs(title = "Mortality vs Standardised Poverty Rate",
+       x = "Standardised Poverty Rate (Z-Score)",
+       y = "Mortality Rate (per 100,000)") +
+  theme_minimal()
+```
+
+The above graph shows positive correlation. As poverty increases, mortality rate also shows tendancy to increase. The plot shows a lot of values are clustered around the average value of poverty rate. 
+
+Certain outliers are evident, with a limited number of counties showing either exceedingly high poverty levels (Z > 4) or exceptionally high death rates (Y > 80). Since poverty appears to be a moderate cause of death, it should be taken into account when developing the model.
+
+
+### Correlation between Poverty and Mortality
+
+```{r poverty-correlation}
+cor(county.data$z.poverty, county.data$mortality.rate, use = "complete.obs")
+```
+
+The correlation is 0.26 which indicates a positive weak correlation between poverty and mortality.
+
+
+### Scatter Plot: Opiates vs Mortality
+
+```{r opiates-vs-mortality}
+# Scatter plot showing the relationship between opiate prescribing and mortality
+ggplot(county.data, aes(x = z.opiates, y = mortality.rate)) +
+  geom_point(alpha = 0.6, color = "darkred", size = 1.2) +
+  geom_smooth(method = "lm", se = FALSE, color = "black", linetype = "dashed") +
+  labs(title = "Mortality vs Standardised Opiate Prescription Rate",
+       x = "Standardised Opiate Prescription Rate (Z-Score)",
+       y = "Mortality Rate (per 100,000)") +
+  theme_minimal()
+```
+
+The above graph indicates a positive weak correlation between opiate prescribing and drug-related mortality. The plot shows most counties have prescription rate around the mean value or slightly higher.  
+
+There are some outliers present, indicating very high prescription rates, but not all of them have high mortality rate. It shows moderate effect and should be included in model development, but suggest presence of other factors as well.
+
+
+### Correlation between Opiates and Mortality
+
+```{r opiates-correlation}
+cor(county.data$z.opiates, county.data$mortality.rate, use = "complete.obs")
+```
+
+
+
+## Histogram of Mortality Rate (Descriptive Distribution)
+
+
+```{r hist-mortality}
+ggplot(county.data, aes(x = mortality.rate)) +
+  geom_histogram(binwidth = 5, fill = "skyblue", color = "black") +
+  labs(title = "Distribution of Mortality Rate (per 100,000)",
+       x = "Mortality Rate",
+       y = "Number of Counties") +
+  theme_minimal()
+```
+
+The plot is right skewed. Most values are clustered between 15 and 40. 
+The warnings shows 275 rows removed, as we had converted "Unreliable" to NA. 
+Some counties have higher rates of mortality, as depicted by the skewness.
+
+```{r}
+ggplot(county.data, aes(x = X2016.Prescribing.Rate)) +
+geom_histogram(fill = 'steelblue', bins = 30) +
+labs(title = 'Distribution of Opioid Prescribing Rates',
+x = 'Prescribing Rate (per 100,000)', y = 'Number of Counties') +
+theme_minimal()
+```
+
+Most counties have prescribing rates between 50 and 150 per 100,000 people, with a few extreme outliers exhibiting rates over 400.
+
+```{r}
+ggplot(county.data, aes(x = below.poverty.rate, y = X2016.Prescribing.Rate)) +
+geom_point(alpha = 0.4, color = 'darkorange') +
+geom_smooth(method = 'lm', se = FALSE, color = 'black') +
+labs(title = 'Poverty Rate vs Opioid Prescribing Rate',
+x = 'Poverty Rate (%)',
+y = 'Opioid Prescribing Rate (per 100,000)') +
+theme_minimal()
+```
+
+The scatter plot demonstrates a weak to moderate positive relationship between poverty and opioid prescribing rates across counties in the U.S. The Pearson correlation coefficient is 0.291, indicating that higher
+poverty levels are modestly associated with higher rates of opioid prescriptions.
+
+```{r boxplot-poverty}
+# Create poverty level groups
+county.data <- county.data %>%
+  mutate(poverty.group = cut(z.poverty,
+                             breaks = c(-Inf, -1, 0, 1, Inf),
+                             labels = c("Low", "Below Avg", "Above Avg", "High")))
+
+# Boxplot of mortality by poverty group
+ggplot(county.data, aes(x = poverty.group, y = mortality.rate)) +
+  geom_boxplot(fill = "lightblue", color = "black") +
+  labs(title = "Mortality Rate by Poverty Group",
+       x = "Poverty Level (Z-Score Groups)",
+       y = "Mortality Rate (per 100,000)") +
+  theme_minimal()
+```
+
+The above plot shows that poverty rate increases -> average mortality rate increases. Its shows relationship between mortality rate and poverty.
+
+The number of outliers for above average or high poverty level is extremely high. It could be due to the influence of confounding factors. 
+
+Poverty should be included in the development of our model. 
+
+##️  Heatmap: Mortality by Standardised Poverty and Opiate Rates
+
+```{r heatmap-mortality}
+# Create binned versions of both predictors
+county.data$poverty.bin <- cut(county.data$z.poverty, breaks = 5)
+county.data$opiates.bin <- cut(county.data$z.opiates, breaks = 5)
+
+# Heatmap of average mortality by 2D bins
+heatmap.data <- county.data %>%
+  group_by(poverty.bin, opiates.bin) %>%
+  summarise(avg.mortality = mean(mortality.rate, na.rm = TRUE)) %>%
+  drop_na()
+
+ggplot(heatmap.data, aes(x = poverty.bin, y = opiates.bin, fill = avg.mortality)) +
+  geom_tile(color = "white") +
+  scale_fill_viridis_c(option = "plasma", name = "Avg Mortality") +
+  labs(title = "Heatmap of Mortality Rate by Poverty & Opiate Rate",
+       x = "Poverty Level (Binned Z-Scores)",
+       y = "Opiate Prescription Rate (Binned Z-Scores)") +
+  theme_minimal()
+```
+
+The above heatmap shows that mortality increases as either poverty or opiate prescribing increases — but the highest mortality occurs when both are high.
+This shows poverty and opiates have a combined impact on mortality, not just separate effects.
+
+## Regression Model
+
+We are building a regression model to understand the linear relation between poverty, opiate prescription rate and mortality across counties due to consumption of alcohol and drugs.
+
+```{r regression-model}
+# Linear regression: Predict mortality from poverty and opiates
+reg.model <- lm(mortality.rate ~ z.poverty + z.opiates, data = county.data)
+
+# View model summary
+summary(reg.model)
+```
+
+The above summary shows:
+
+The co-efficients for both the variables are positive. This shows that when poverty and prescription rates are increasing, mortality rate is also increasing. 
+
+The p value ( < 0.05) of both the variables suggests thar they are contributing significantly to mortality.  
+
+R-squared = 0.0834 → about 8.3% of variation in mortality is explained by poverty + opiates. This shows that drug mortality is affected by various factors, but the higher poverty and more prescriptions are increasing the mortality rate as found out in the descriptive analysis.  
+
+This is a reasonable value for social science data.
+
+## Justification for Linear Regression 
+
+We selected linear regression because our dependent variable  mortality rate is a continuous numeric variable. 
+Linear regression is well-suited for modeling continuous outcomes and allows us to estimate the marginal effect of each predictor (e.g., poverty rate, prescribing rate) on mortality.
+
+To check if linear regression is a valid choice for this data:
+
+### Residual Plot 
+
+```{r residuals-plot}
+# Residual plot
+plot(reg.model, which = 1)  # Residuals vs Fitted
+```
+
+The above plot shows that linear regression is working for this data. Most of the erros is spread around 0, and is evenly spread indicating model is predicting well. 
+
+Some points are far away, indicating for some counties the model didnt perform well, which is expected in real world. 
+
+
+### QQ Plot for the residuals
+
+```{r qq-plot}
+# Q-Q plot for normality
+plot(reg.model, which = 2)  # Normal Q-Q
+```
+
+The above plot is checking if the errors i.e residuals of the model are normally distributed which is expected for linear regression models. If it is valid then the residual points (black dots) would follow the dotted line. 
+
+As seen from the graph, most of the points follow normal distribution as expected, with a few large positive outliers towards the right showing model unpredicted by large value (curve bending up).  This could be due to some counties having higher than expected mortality. As in real-world data, some outliers are expected, especially with social science data. 
+
+The assumption of residuals following normal distribution is reasonable and linear regression is valid for this data. 
+
+The above discussions and results shows that linear regression is appropriate for our data.
+
+## Regression model with Interaction 
+
+### Does the effect of opiates on mortality get stronger in high-poverty counties?
+
+Here we are testing whether the relationship between opiates prescriptions and mortality depends on county-level poverty.
+i.e interaction : z.poverty:z.opiates
+
+```{r regression-interaction}
+# Model with interaction between poverty and opiates
+reg.model.int <- lm(mortality.rate ~ z.poverty * z.opiates, data = county.data)
+
+# Summary of interaction model
+summary(reg.model.int)
+```
+
+The coefficient for the interaction term i.e z.poverty:z.opiates = -0.6272 is negative, which implies that the effect of opiate prescription is weaker with increasing poverty. 
+
+The p value for the interaction term i.e. 8.58e-05 shows it is statistically significant as p < 0.001. 
+
+**The impact of opiate prescriptions depends on the level of poverty**
+
+Low poverty counties: It is observed that for these counties opiate prescription is linked strongly to high mortality rates due to drugs and alcohol.
+
+High poverty counties: It is observed that for these counties the opiate prescription rate is linked weakly to high mortality rates due to drugs and alcohol. 
+
+To conclude, both opiate prescription and poverty are increasing mortality. In a case when both of them are high, the combined effect is not a simple linear stack up. Say for a county with high poverty, the risk imposed by high opiate prescription becomes lesser. 
+
+
+## Compare the Two Models using AIC
+
+To show that the interaction improves model performance:
+
+```{r model-comparison}
+# Compare both models
+AIC(reg.model, reg.model.int)  # Lower AIC = better fit
+```
+
+The AIC metric shows how well our model is fitting the data, by penalizing the complexity factor. A lower AIC Value for the interaction potrays better model, even though it is slightly more complex. 
+
+To conclude:
+
+**The combined effect of poverty and opiates explains mortality more accurately.**
+
+
+## Mapping Regression Results
+
+Here we are mapping the predicted mortality rates for different US Counties. 
+
+```{r add-predicted-values}
+# Add predicted mortality to county.data
+county.data$predicted.mortality <- predict(reg.model.int, newdata = county.data)
+```
+
+```{r}
+# (Reused from before if needed)
+us.shape.2 <- full_join(us.shape.2,
+                        county.data %>%
+                          dplyr::select(county, below.poverty.rate, mortality.rate, X2016.Prescribing.Rate, predicted.mortality))
+```
+
+```{r map-predicted-mortality}
+# Map of predicted mortality from the regression model
+ggplot(us.shape.2) +
+  geom_sf(aes(fill = predicted.mortality), color = NA) +
+  scale_fill_viridis_c(option = "plasma", na.value = "grey50", name = "Predicted Mortality") +
+  labs(title = "Predicted Mortality Rate by County (Model-Based)",
+       caption = "Based on poverty, opiate prescription rates, and their interaction") +
+  coord_sf(xlim = c(-180, -60), ylim = c(15, 75), expand = FALSE) +
+  theme_minimal()
+
+
+```
+
+Based on our final model including the interaction, we have plotted the above graph showing mortality rates. The predictions from the model were mapped with the US spatial data. 
+
+Purple = lower deaths ; Yellow = higher deaths
+
+The above map shows that counties in the Alpine, Midwest and Southeast have high mortality. These are often places that have high poverty and higher opiate prescription rates. 
+
+This map also shows us which areas are most at risk, even if some counties had missing data, which makes it helpful for policy making.
+
+
+```{r residual-map}
+# Calculate residuals
+county.data$residuals <- county.data$mortality.rate - county.data$predicted.mortality
+
+# Merge residuals back into shapefile
+us.shape.2 <- full_join(us.shape.2,
+                        county.data %>%
+                          dplyr::select(county, residuals))
+
+# Map of residuals
+ggplot(us.shape.2) +
+  geom_sf(aes(fill = residuals), color = NA) +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0, 
+                       name = "Residuals") +
+  labs(title = "Model Residuals by County",
+       caption = "Red = Underpredicted, Blue = Overpredicted") +
+  coord_sf(xlim = c(-180, -60), ylim = c(15, 75), expand = FALSE) +
+  theme_minimal()
+```
+
+In the above plot:
+1) Red areas show where our model underpredicted → Actual deaths were higher than predicted. This is evident in some Midwestern and Western countries. This could be due to other factors imposing risk apart from poverty and opiate prescription rate. 
+
+2) Blue areas show where our model overpredicted → Actual deaths were lower than predicted. This is evident in southern or eastern countries. This could be due to good healthcare services or healthy lifestyle awareness. 
+
+3) And white/grey areas show a value close to zero → Model predicted pretty well. This is evident in most areas showing the model did a good job. 
+
+## Complementary Model: Decision Tree Classification 
+
+
+```{r}
+tree_model <- rpart(mortality.rate ~ below.poverty.rate + X2016.Prescribing.Rate,
+data = county.data, method = "anova")
+rpart.plot(tree_model, type = 2, extra = 101)
+```
+
+
+The regression tree reveals interpretable thresholds for both opioid prescribing rates and poverty levels.
+Counties with low prescribing rates (< 78) and low poverty (< 12%) tend to have the lowest mortality rates
+(~17 per 100,000). Conversely, counties with high prescribing rates (≥ 78) and very high poverty (≥ 31%)
+have dramatically higher mortality rates, with a subgroup averaging 55 deaths per 100,000.
+This supports the hypothesis that opioid access and socioeconomic disadvantage interact to influence
+mortality outcomes, and that the risk increases disproportionately once certain thresholds are crossed.
+
+```{r}
+tree_model <- rpart(mortality.rate ~ below.poverty.rate + X2016.Prescribing.Rate,
+data = county.data, method = "anova")
+```
+
+```{r}
+county.data$predicted.mortality.tree <- predict(tree_model, newdata = county.data)
+us.shape.2 <- full_join(us.shape.2,
+county.data %>%
+select(county, predicted.mortality.tree),
+by = "county")
+```
+
+```{r}
+county.data <- county.data %>%
+mutate(tree.group = case_when(
+X2016.Prescribing.Rate < 78 & below.poverty.rate < 12 ~ "Low Risk",
+X2016.Prescribing.Rate < 78 & below.poverty.rate >= 12 ~ "Moderate Risk",
+X2016.Prescribing.Rate >= 78 & below.poverty.rate < 31 ~ "High Risk",
+X2016.Prescribing.Rate >= 78 & below.poverty.rate >= 31 ~ "Very High Risk",
+TRUE ~ NA_character_
+))
+us.shape.2 <- left_join(us.shape.2, county.data %>% select(county, tree.group), by = "county")
+```
+
+```{r tree_map, fig.width=10, fig.height=7}
+ggplot(us.shape.2) +
+geom_sf(aes(fill = tree.group), color = NA) +
+scale_fill_manual(values = c(
+"Low Risk" = "#2c7bb6",
+"Moderate Risk" = "#abd9e9",
+"High Risk" = "#fdae61",
+"Very High Risk" = "#d7191c"
+), na.value = "grey80", name = "Mortality Risk (Tree Classification)") +
+coord_sf(xlim = c(-180, -65), ylim = c(17, 72), expand = FALSE) +
+labs(
+title = "   County Classification Based on Decision Tree Rules",
+caption = "Derived from thresholds on poverty and opioid prescribing rate"
+) +
+theme_minimal() +
+theme(
+plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+legend.title = element_text(size = 12),
+legend.text = element_text(size = 10),
+plot.caption = element_text(size = 10, hjust = 0),
+panel.grid = element_blank(),
+plot.margin = margin(t = 20, r = 10, b = 10, l = 10)
+)
+```
+
+The map illustrates a decision-tree-based classification of U.S. counties into four mortality risk levels using
+poverty rate and opioid prescribing rate as predictors. Several key spatial patterns emerge:
+Low Risk counties (blue) are predominantly located in the Northeast and parts of the Midwest, regions
+typically characterized by lower poverty rates and relatively controlled opioid prescribing. This aligns with
+expectations and supports the model’s validity.
+High Risk counties (orange) are widespread across the South, Midwest, and Western states, indicating a
+broader regional prevalence of higher opioid prescribing or moderate poverty. These areas may represent
+underserved or medically vulnerable populations.
+Very High Risk counties (red) are relatively rare but form visible clusters in the South and Appalachia, suggesting that combined socioeconomic disadvantage and high opioid access significantly elevate mortality
+risk. These regions may warrant targeted policy attention or public health intervention.
+Moderate Risk counties (light blue) fill in the transitional spaces—places where poverty is high but prescribing is relatively low, indicating that structural disadvantage alone, even without excessive opioid access,
+still correlates with elevated risk.
+Gray counties (NA) likely reflect missing or unreliable data. They cluster in Alaska, parts of the West, and
+scattered counties across the South, underscoring the need for improved data coverage in certain regions.
+
+
+# Results and Discussion
+
+We started by building a basic linear regression model using poverty rate and opioid prescribing rate as the two main predictors. The results showed that both variables had a significant positive relationship with mortality, meaning that counties with higher poverty and more opioid prescriptions tended to have higher drug and alcohol related death rates, even after accounting for other factors.
+
+The model had an adjusted R² of about 0.083, which means it explained around 8% of the variation in mortality. While this is relatively low, it’s still acceptable for social science research and suggests that other unmeasured factors also play a role.
+
+Based on the fitted values from this model, we created a county-level map showing predicted mortality rates. Darker colors on the map indicate higher predicted mortality. The results highlighted that counties in the southeastern and south-central parts of the U.S., especially those with higher poverty, were more likely to have elevated predicted mortality. In contrast, counties in the northeast and coastal western regions tended to have lower predicted mortality. This map also helped fill in areas where actual data were missing or labeled as “Unreliable,” providing a more complete nationwide picture.
+
+In the second model, we added an interaction term between standardized poverty and prescribing rates (z.poverty * z.opiates). The interaction was significant, indicating that in counties with higher poverty, the effect of opioid prescribing on mortality was even stronger. In other words, the combined presence of poverty and high prescription levels can make the health risks worse.
+
+We used this second model to generate another prediction map. Compared to the first map, this one showed even higher predicted mortality in high-poverty, high-prescription areas—particularly in the inland southeastern U.S. This supports the idea that the model effectively captured the interaction between the two variables and reinforces the importance of considering overlapping structural risks when forming public health responses.
+
+Together, both maps showed how the predicted mortality risk varies across space and helped fill in counties with missing or unreliable data. They also clearly revealed that economic disadvantage and medical risk—poverty and opioid access—often overlap geographically, especially in parts of the South and Midwest.
+
+We also used decision trees to classify counties according to below poverty rate as a binary variable, and the results showed that when the poverty rate exceeded 31% and the prescription rate was high, the mortality rate increased significantly, averaging more than 50 deaths per 100,000 people. This classification showed obvious geographical clustering, further supporting the conclusion of the linear model.
+
+Although the linear models assume a simple relationship and don’t account for spatial correlation, combining them with map visualizations gave us valuable insights into how social and medical risks overlap geographically. Future research could improve on this by adding more variables—like race, education, or healthcare access—or by using spatial regression or machine learning methods. From a policy perspective, our findings suggest that resources should be prioritized in areas of the Southeast and Midwest where poverty and high prescription rates intersect.
+
+
+# Limitations
+
+Social-economic disadvantage includes many elements, our model only highlighted poverty. Other elements can be further investigated individually or combined (to understand the joint impact). For example, Fink et al concluded that income inequality, Rey index and HDI showed the most consistent and substantial associations with drug overdose deaths, whereas unemployment and poverty rates showed weaker associations [15].
+
+Legal opiate prescription practice in different counties(states) varies, which might cause different causal correlation to mortality rate. It is impossible to capture illicit opiate usage, which would most definitely cause different result. Martin et al proved in July 2016 sales of opioids through US crypto markets represented 13.7% of all drug sales compared with a modelled estimate of 6.7% of all sales had the new schedule not been introduced [25].
+
+One key limitation of the linear regression model is that it assumes a linear relationship between the predictors (poverty rate and opioid prescribing rate) and the outcome (mortality rate). However, in real-world data, especially in social and health context,these relationships are often non-linear or involve threshold effects. This means the linear model may underfit the data and fail to capture more complex interactions.
+
+Moreover, binary classification of poverty discards nuance, although binary splitting improves interpretability, it removes the ability to detect non-linear or threshold effects within continuous variation in poverty rates.
+
+# Conclusion
+
+We examined how **county-level poverty and opiate prescription rates** influence mortality. Through scatter plots, correlations, and regression modeling, we found consistent evidence of **positive associations** — higher poverty and prescription rates were both linked to elevated mortality. The inclusion of an **interaction term** revealed that these effects confound each other in disadvantaged regions.
+ 
+We found that poverty and opiate prescriptions both increase drug-related deaths — and when both are high, it is especially bad. Our model predicts these deaths across the US and maps show some regions are hit much harder than others.
+
+Our mapping of predicted values and residuals added spatial context, revealing clusters of high-risk areas and regions where the model underperformed — potentially due to missing social or healthcare-related variables.
+
+These findings highlight the **structural nature of drug-related mortality**, emphasizing the need for place-based public health policies that tackle poverty and prescription practices in tandem. While the model performed well overall, further work could incorporate demographic, behavioral, or access-to-care variables to improve accuracy.
+ 
+
+\newpage 
+# References
+
+1. McKelvie, S. (2020). “Smack in the middle”: Urban governance and the spatialization of overdose epidemics. *City & Community, 19*(3), 704–725. https://doi.org/10.1111/cico.12456
+
+2. Lankenau, S. E., Teti, M., Silva, K., Bloom, J. J., Harocopos, A., & Treese, M. (2012). Patterns of prescription drug misuse among young injection drug users. *Journal of Urban Health, 89*(6), 1004–1016. https://doi.org/10.1007/s11524-012-9691-9
+
+3. Walde, J., Andersson, L., Johnson, B., & Håkansson, A. (2023). Drug prescriptions preceding opioid-related deaths—a register study in forensic autopsy patients. *PLOS ONE, 18*(5), e0285583. https://doi.org/10.1371/journal.pone.0285583
+
+4. Rudd, R. A., Seth, P., David, F., & Scholl, L. (2016). Increases in drug and opioid overdose deaths—United States, 2000–2015. *Morbidity and Mortality Weekly Report, 65*, 1445–1452.
+
+5. Florence, C. S., Zhou, C., Luo, F., & Xu, L. (2016). The economic burden of prescription opioid overdose, abuse, and dependence in the United States, 2013. *Medical Care, 54*(10), 901–906.
+
+6. Hah, J. M., Bateman, B. T., Ratliff, J., Curtin, C., & Sun, E. (2017). Chronic opioid use after surgery: Implications for perioperative management in the face of the opioid epidemic. *Anesthesia & Analgesia, 125*(5), 1733–1740.
+
+7. Vadivelu, N., Kai, A. M., Kodumudi, V., Sramcik, J., & Kaye, A. D. (2018). The opioid crisis: A comprehensive overview. *Current Pain and Headache Reports, 22*(3), 16.
+
+8. Wunsch, H., Wijeysundera, D. N., Passarella, M. A., & Neuman, M. D. (2016). Opioids prescribed after low-risk surgical procedures in the United States, 2004–2012. *JAMA, 315*(15), 1654–1657.
+
+9. Reyes, R. (2010, October 31). Pain clinics feeding habit. *McClatchy - Tribune Business News*. https://www.proquest.com/wire-feeds/pain-clinics-feeding-habit/docview/761207402/se-2?accountid=14757
+
+10. Griesler, P. C., Hu, M., Wall, M. M., & Kandel, D. B. (2019). Medical use and misuse of prescription opioids in the US adult population: 2016–2017. *American Journal of Public Health, 109*(9), 1258–1265. https://doi.org/10.2105/AJPH.2019.305162
+
+11. Dallin, J., King, C. R., & Curtis, G. (2023). The opioid epidemic: A review of the contributing factors, negative consequences, and best practices. *Cureus, 15*(7). https://doi.org/10.7759/cureus.41621
+
+12. Brondeel, K. C., Malone, K. T., Ditmars, F. R., Vories, B. A., Ahmadzadeh, S., Tirumala, S., ... Kaye, A. D. (2023). Algorithms to identify nonmedical opioid use. *Current Pain and Headache Reports, 27*(5), 81–88. https://doi.org/10.1007/s11916-023-01104-7
+
+13. Light, D. (2010). *The risks of prescription drugs*. Columbia University Press. https://doi.org/10.7312/ligh14692
+
+14. Paulozzi, L., Franklin, G., Kerlikowske, R. G., Jones, C. M., Ghiya, N., & Popovic, T. (2012). CDC grand rounds: Prescription drug overdoses—A U.S. epidemic. *Morbidity and Mortality Weekly Report, 61*(1), 10–13. https://link.gale.com/apps/doc/A278631245/AONE?u=usyd&sid=bookmark-AONE&xid=cb6c6511
+
+15. Fink, D. S., Keyes, K. M., Branas, C., Cerdá, M., Gruenwald, P., & Hasin, D. (2023). Understanding the differential effect of local socio-economic conditions on the relation between prescription opioid supply and drug overdose deaths in US counties. *Addiction, 118*(6), 1072–1082. https://doi.org/10.1111/add.16123
+
+16. Johnson, E. M., Lanier, W. A., Merrill, R. M., Crook, J., Porucznik, C. A., Rolfs, R. T., & Sauer, B. (2013). Unintentional prescription opioid-related overdose deaths: Description of decedents by next of kin or best contact, Utah, 2008–2009. *Journal of General Internal Medicine, 28*(4), 522–529. https://doi.org/10.1007/s11606-012-2225-z
+
+17. Addiction to prescription painkillers and heroin surges in Pittsburgh, most widely abused drugs citywide; -- heroin causing more than half of overdose deaths; resources on private office-based treatment available for Pittsburgh consumers --. (2006, May 31). *PR Newswire*. https://www.proquest.com/wire-feeds/addiction-prescription-painkillers-heroin-surges/docview/451189838/se-2
+
+18. Patel, K. B., & Rushefsky, M. E. (2021). *The opioid epidemic in the United States: Missed opportunities and policy failures* (1st ed.). Routledge. https://doi.org/10.4324/9781003215899
+
+19. Freskos, B. (2013, January 22). Lawmakers, advocates work to mitigate prescription for disaster. *McClatchy - Tribune Business News*. https://www.proquest.com/wire-feeds/lawmakers-advocates-work-mitigate-prescription/docview/1271956234/se-2
+
+20. Reyes, R. (2010, October 31). Pain clinics feeding habit. *McClatchy - Tribune Business News*. https://www.proquest.com/wire-feeds/pain-clinics-feeding-habit/docview/761207402/se-2
+
+21. Schroeder, R. D., Ford, J. A., & Higgins, G. E. (2019). Death and destruction, hope and resilience. In *The prescription drug problem: A new American crisis?* (pp. 153–176). Praeger. https://doi.org/10.5040/9798216000624.ch-005
+
+22. Zhao-Fleming, H., Hand, A., Zhang, K., et al. (2018). Effect of non-steroidal anti-inflammatory drugs on post-surgical complications against the backdrop of the opioid crisis. *Burns & Trauma, 6*. https://doi.org/10.1186/s41038-018-0128-x
+
+23. Bart, G. (2012). Maintenance medication for opiate addiction: The foundation of recovery. *Journal of Addictive Diseases, 31*(3), 207–225. https://doi.org/10.1080/10550887.2012.694598
+
+24. Mahase, E. (2019). Most fatal opioid overdoses are not caused by prescription drugs, US study finds. *BMJ, 367*, l5993. https://doi.org/10.1136/bmj.l5993
+
+25. Martin, J., Cunliffe, J., Décary-Hétu, D., & Aldridge, J. (2018). Effect of restricting the legal supply of prescription opioids on buying through online illicit marketplaces: Interrupted time series analysis. *BMJ, 361*, k2270. https://doi.org/10.1136/bmj.k2270
